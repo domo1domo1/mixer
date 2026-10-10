@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Track Mixer</title>
+    <style>
+        /* 전문 DAW 스타일의 다크 테마 */
+        body { font-family: 'Segoe UI', -apple-system, sans-serif; padding: 20px; max-width: 1000px; margin: auto; background-color: #121212; color: #d4d4d4; }
+        h2 { text-align: center; color: #ffffff; font-weight: 600; font-size: 22px; margin-bottom: 25px; letter-spacing: 1px;}
+        
+        .panel { background: #1e1e1e; padding: 20px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.6); margin-bottom: 20px; border: 1px solid #333; }
+        
+        /* 로딩 오버레이 */
+        #loadingOverlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 9999; flex-direction: column; justify-content: center; align-items: center; }
+        #loadingOverlay h3 { color: #fff; margin-bottom: 10px; }
+        #loadingOverlay p { color: #aaa; font-size: 14px; }
+        .spinner { border: 4px solid #333; border-top: 4px solid #007acc; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 20px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* 파일 업로드 */
+        .file-upload { text-align: center; margin-bottom: 20px; border: 2px dashed #444; padding: 25px; transition: 0.2s; border-radius: 8px; background: #181818; }
+        .file-upload:hover { border-color: #007acc; background: #1c1c1c; }
+        input[type="file"] { cursor: pointer; color: #ccc; }
+        
+        /* 마스터 컨트롤 */
+        .master-controls { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 15px; margin-bottom: 15px;}
+        .btn-group { display: flex; gap: 8px; }
+        button { padding: 10px 20px; font-size: 13px; font-weight: bold; cursor: pointer; border: none; border-radius: 4px; background-color: #333; color: #fff; transition: 0.15s; }
+        button:hover { background-color: #444; }
+        .play-btn { background-color: #007acc; } 
+        .play-btn:hover { background-color: #005f9e; }
+        
+        /* 슬라이더 커스텀 */
+        input[type=range] { -webkit-appearance: none; background: transparent; width: 100%; cursor: pointer; }
+        input[type=range]:focus { outline: none; }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 6px; background: #111; border-radius: 3px; border: 1px solid #222; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 16px; width: 16px; border-radius: 50%; background: #007acc; margin-top: -6px; }
+        
+        .master-vol { display: flex; align-items: center; gap: 10px; flex: 1; max-width: 250px; font-size: 13px; font-weight: 600;}
+        
+        /* 타임 디스플레이 */
+        .time-display { font-size: 14px; font-family: 'Courier New', monospace; min-width: 55px; text-align: center; color: #fff; background: #000; padding: 6px 10px; border-radius: 4px; border: 1px solid #333;}
+
+        /* 마스터 및 트랙 파형(Waveform) 공통 영역 */
+        .waveform-wrapper { position: relative; width: 100%; background: #111; border-radius: 4px; overflow: hidden; border: 1px solid #333; }
+        .waveform-canvas { display: block; width: 100%; height: 100%; opacity: 0.7; position: relative; z-index: 1; }
+        
+        /* 재생 진행상황 (지나간 파형 밝게 표시) */
+        .progress-fill { position: absolute; top: 0; left: 0; height: 100%; background: rgba(255, 255, 255, 0.25); pointer-events: none; width: 0%; z-index: 2; border-right: 1px solid rgba(255,255,255,0.6); }
+        
+        /* 현재 위치 플레이헤드 선 */
+        .playhead { position: absolute; top: 0; left: 0%; width: 2px; height: 100%; background: #ffeb3b; box-shadow: 0 0 8px #ffeb3b; pointer-events: none; z-index: 3; }
+        
+        /* 마스터 재생바 (파형 위에 오버레이) */
+        .master-seek-area { display: flex; align-items: center; gap: 15px; }
+        .master-waveform { height: 60px; flex: 1; cursor: pointer; }
+        .seek-slider-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; z-index: 10; margin: 0; }
+        
+        /* 개별 트랙 (콘솔 스타일) */
+        .track { display: flex; flex-direction: column; padding: 15px; background: #252526; border-radius: 6px; margin-bottom: 12px; border-left: 4px solid #444; transition: 0.2s; }
+        .track:hover { border-left-color: #007acc; background: #2a2a2b; }
+        
+        .track-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; gap: 15px;}
+        .track-name { font-weight: bold; font-size: 14px; color: #eee; flex: 1; }
+        .track-controls { display: flex; align-items: center; gap: 15px; justify-content: flex-end; }
+        
+        .control-group { display: flex; align-items: center; gap: 8px; width: 110px; }
+        .control-label { font-size: 11px; color: #888; font-weight: bold; width: 25px; text-align: right; }
+        .pan-slider::-webkit-slider-thumb { background: #c586c0; height: 14px; width: 14px; }
+        
+        .btn-mute, .btn-solo { padding: 6px 0; border-radius: 4px; font-size: 12px; width: 36px; text-align: center; background-color: #333; border: 1px solid #222; }
+        .btn-mute.active { background-color: #d16969; color: white; border-color: #a14d4d; }
+        .btn-solo.active { background-color: #d7ba7d; color: #1e1e1e; font-weight: bold; border-color: #b0955e; }
+
+        .track-waveform { height: 45px; }
+    </style>
+</head>
+<body>
+    <!-- 로딩 화면 -->
+    <div id="loadingOverlay">
+        <div class="spinner"></div>
+        <h3>오디오 파형을 스캔하고 있습니다...</h3>
+        <p>파일 용량에 따라 약간의 시간이 소요될 수 있습니다.</p>
+    </div>
+
+    <h2>Multi-Track Mixer</h2>
+    
+    <div class="panel file-upload">
+        <label for="fileInput" style="display:block; margin-bottom:10px; font-weight:bold; font-size: 16px;">멀티트랙 WAV 파일 불러오기 (Drag & Drop)</label>
+        <div style="font-size: 13px; color: #888;">음원을 불러오면 모든 트랙의 파형을 시각화합니다.</div>
+        <input type="file" id="fileInput" multiple accept=".wav, .mp3, .m4a" style="margin-top: 15px;">
+    </div>
+
+    <div class="panel">
+        <div class="master-controls">
+            <div class="btn-group">
+                <button class="play-btn" id="playBtn">▶ Play</button>
+                <button id="pauseBtn">⏸ Pause</button>
+                <button id="stopBtn">⏹ Stop</button>
+            </div>
+            <div class="master-vol">
+                <label>Master Vol</label>
+                <input type="range" id="masterVolume" min="0" max="1" step="0.01" value="1">
+            </div>
+        </div>
+        
+        <!-- 마스터 재생바 & 전체 파형 영역 -->
+        <div class="master-seek-area">
+            <span id="currentTime" class="time-display">00:00</span>
+            <div class="waveform-wrapper master-waveform">
+                <canvas id="masterCanvas" class="waveform-canvas" width="1000" height="60"></canvas>
+                <div class="progress-fill" id="masterProgress"></div>
+                <div class="playhead" id="masterPlayhead"></div>
+                <!-- 보이지 않는 슬라이더로 클릭/드래그 컨트롤 -->
+                <input type="range" id="seekBar" class="seek-slider-overlay" min="0" max="100" value="0" step="0.1">
+            </div>
+            <span id="totalTime" class="time-display">00:00</span>
+        </div>
+    </div>
+
+    <div id="trackList"></div>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const trackList = document.getElementById('trackList');
+        const masterVolumeSlider = document.getElementById('masterVolume');
+        const seekBar = document.getElementById('seekBar');
+        const currentTimeEl = document.getElementById('currentTime');
+        const totalTimeEl = document.getElementById('totalTime');
+        const masterCanvas = document.getElementById('masterCanvas');
+        const masterPlayhead = document.getElementById('masterPlayhead');
+        const masterProgress = document.getElementById('masterProgress');
+        const loadingOverlay = document.getElementById('loadingOverlay');
+
+        let audioCtx;
+        let tracks = []; 
+        let masterVolume = 1.0;
+        let isPlaying = false;
+        let duration = 0;
+        let isDragging = false;
+        let wasPlayingBeforeDrag = false;
+
+        const trackNameMap = {
+            'track01': '트랙 1 리드 기타',
+            'track02': '트랙 2 보컬',
+            'track03': '트랙 3 세컨 기타',
+            'track04': '트랙 4 베이스',
+            'track05': '트랙 5 메트로놈',
+            'track06': '트랙 6 키보드',
+            'track07_st': '트랙 7 드럼 1',
+            'track08_st': '트랙 8 드럼 2'
+        };
+
+        function getDisplayName(fileName) {
+            const rawName = fileName.replace(/\.[^/.]+$/, "");
+            return trackNameMap[rawName.toLowerCase()] || rawName;
+        }
+
+        function formatTime(seconds) {
+            if (isNaN(seconds) || !isFinite(seconds)) return "00:00";
+            const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+            const s = Math.floor(seconds % 60).toString().padStart(2, '0');
+            return `${m}:${s}`;
+        }
+
+        function saveSettings() {
+            const settings = {};
+            tracks.forEach(t => {
+                settings[t.name] = { volume: t.volume, pan: t.pan, isMute: t.isMute, isSolo: t.isSolo };
+            });
+            localStorage.setItem('mixer_settings', JSON.stringify(settings));
+        }
+
+        function loadSettings(trackName) {
+            const saved = JSON.parse(localStorage.getItem('mixer_settings') || '{}');
+            return saved[trackName] || { volume: 1.0, pan: 0, isMute: false, isSolo: false };
+        }
+
+        function updateAudioStates() {
+            const anySolo = tracks.some(t => t.isSolo);
+            tracks.forEach(t => {
+                let activeVolume = t.volume * masterVolume;
+                if (t.isMute) activeVolume = 0;
+                else if (anySolo && !t.isSolo) activeVolume = 0;
+                
+                t.gainNode.gain.value = activeVolume;
+                t.pannerNode.pan.value = t.pan;
+            });
+            saveSettings();
+        }
+
+        masterVolumeSlider.addEventListener('input', (e) => {
+            masterVolume = parseFloat(e.target.value);
+            updateAudioStates();
+        });
+
+        function drawWaveform(channelData, canvas, color) {
+            const ctx = canvas.getContext('2d');
+            const width = canvas.width;
+            const height = canvas.height;
+            ctx.clearRect(0, 0, width, height);
+            
+            const step = Math.ceil(channelData.length / width);
+            const amp = height / 2;
+            
+            ctx.fillStyle = color;
+            for(let i = 0; i < width; i++) {
+                let min = 1.0;
+                let max = -1.0;
+                for (let j = 0; j < step; j++) {
+                    const datum = channelData[(i * step) + j];
+                    if (datum < min) min = datum;
+                    if (datum > max) max = datum;
+                }
+                const y = (1 + min) * amp;
+                const h = Math.max(1, (max - min) * amp);
+                ctx.fillRect(i, y, 1, h);
+            }
+        }
+
+        // 재생 진행률에 따른 하이라이트 표시
+        function updatePlayheads(percentage) {
+            // 방어 코드: 비정상적인 값이 들어오면 0%로 처리
+            if(isNaN(percentage) || percentage < 0) percentage = 0;
+            if(percentage > 100) percentage = 100;
+
+            const percentStr = `${percentage}%`;
+            
+            masterPlayhead.style.left = percentStr;
+            masterProgress.style.width = percentStr;
+            
+            tracks.forEach(t => {
+                if(t.playheadEl) t.playheadEl.style.left = percentStr;
+                if(t.progressEl) t.progressEl.style.width = percentStr;
+            });
+        }
+
+        fileInput.addEventListener('change', async function() {
+            if (this.files.length === 0) return;
+            
+            loadingOverlay.style.display = 'flex';
+            await new Promise(r => setTimeout(r, 50)); 
+
+            try {
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+                trackList.innerHTML = '';
+                tracks.forEach(t => { t.audio.pause(); t.audio.src = ''; });
+                tracks = [];
+                duration = 0;
+                seekBar.value = 0;
+                currentTimeEl.textContent = "00:00";
+                totalTimeEl.textContent = "00:00";
+                updatePlayheads(0);
+                isPlaying = false;
+                isDragging = false;
+
+                const sortedFiles = Array.from(this.files).sort((a, b) => a.name.localeCompare(b.name));
+                let masterAudioData = null; 
+
+                const processPromises = sortedFiles.map(async (file, index) => {
+                    const url = URL.createObjectURL(file);
+                    const audio = new Audio(url);
+                    audio.preservesPitch = false; 
+
+                    const source = audioCtx.createMediaElementSource(audio);
+                    const pannerNode = audioCtx.createStereoPanner();
+                    const gainNode = audioCtx.createGain();
+                    
+                    source.connect(pannerNode);
+                    pannerNode.connect(gainNode);
+                    gainNode.connect(audioCtx.destination);
+
+                    const displayName = getDisplayName(file.name);
+                    const savedState = loadSettings(displayName);
+
+                    const arrayBuffer = await file.arrayBuffer();
+                    const decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+                    const channelData = decodedBuffer.getChannelData(0); 
+                    const bufferDuration = decodedBuffer.duration; // 오디오 데이터에서 정확한 길이 직접 추출
+
+                    return { index, audio, pannerNode, gainNode, displayName, savedState, channelData, bufferDuration };
+                });
+
+                const processedFiles = await Promise.all(processPromises);
+
+                processedFiles.forEach(data => {
+                    const { index, audio, pannerNode, gainNode, displayName, savedState, channelData, bufferDuration } = data;
+
+                    if (!masterAudioData || channelData.length > masterAudioData.length) {
+                        const newMaster = new Float32Array(channelData.length);
+                        if (masterAudioData) newMaster.set(masterAudioData);
+                        masterAudioData = newMaster;
+                    }
+                    for(let i=0; i<channelData.length; i++) {
+                        masterAudioData[i] += channelData[i] * 0.15; 
+                    }
+
+                    // 기준이 되는 첫 번째 트랙에 길이 정보 즉시 세팅
+                    if (index === 0) {
+                        duration = bufferDuration; // 추출된 길이를 직접 할당 (00:00 버그 픽스)
+                        seekBar.max = duration;
+                        totalTimeEl.textContent = formatTime(duration);
+                        
+                        audio.addEventListener('timeupdate', () => {
+                            if (!isDragging) {
+                                seekBar.value = audio.currentTime;
+                                currentTimeEl.textContent = formatTime(audio.currentTime);
+                                if (duration > 0) {
+                                    updatePlayheads((audio.currentTime / duration) * 100);
+                                }
+                            }
+                        });
+                        audio.addEventListener('ended', () => isPlaying = false );
+                    }
+
+                    const trackDiv = document.createElement('div');
+                    trackDiv.className = 'track';
+
+                    const headerDiv = document.createElement('div');
+                    headerDiv.className = 'track-header';
+                    
+                    const nameLabel = document.createElement('div');
+                    nameLabel.className = 'track-name';
+                    nameLabel.textContent = displayName; 
+
+                    const controlsDiv = document.createElement('div');
+                    controlsDiv.className = 'track-controls';
+
+                    const trackObj = {
+                        name: displayName,
+                        audio: audio,
+                        pannerNode: pannerNode,
+                        gainNode: gainNode,
+                        volume: savedState.volume,
+                        pan: savedState.pan,
+                        isMute: savedState.isMute,
+                        isSolo: savedState.isSolo,
+                        playheadEl: null,
+                        progressEl: null
+                    };
+                    tracks.push(trackObj);
+
+                    const soloBtn = document.createElement('button');
+                    soloBtn.className = `btn-solo ${trackObj.isSolo ? 'active' : ''}`;
+                    soloBtn.textContent = 'S';
+                    soloBtn.addEventListener('click', () => {
+                        trackObj.isSolo = !trackObj.isSolo;
+                        soloBtn.classList.toggle('active', trackObj.isSolo);
+                        updateAudioStates();
+                    });
+
+                    const muteBtn = document.createElement('button');
+                    muteBtn.className = `btn-mute ${trackObj.isMute ? 'active' : ''}`;
+                    muteBtn.textContent = 'M';
+                    muteBtn.addEventListener('click', () => {
+                        trackObj.isMute = !trackObj.isMute;
+                        muteBtn.classList.toggle('active', trackObj.isMute);
+                        updateAudioStates();
+                    });
+
+                    const panGroup = document.createElement('div');
+                    panGroup.className = 'control-group';
+                    panGroup.innerHTML = '<span class="control-label">Pan</span>';
+                    const panSlider = document.createElement('input');
+                    panSlider.type = 'range'; panSlider.className = 'pan-slider';
+                    panSlider.min = '-1'; panSlider.max = '1'; panSlider.step = '0.05'; panSlider.value = trackObj.pan;
+                    panSlider.addEventListener('input', (e) => {
+                        trackObj.pan = parseFloat(e.target.value); updateAudioStates();
+                    });
+                    panGroup.appendChild(panSlider);
+
+                    const volGroup = document.createElement('div');
+                    volGroup.className = 'control-group';
+                    volGroup.innerHTML = '<span class="control-label">Vol</span>';
+                    const volSlider = document.createElement('input');
+                    volSlider.type = 'range';
+                    volSlider.min = '0'; volSlider.max = '1.5'; volSlider.step = '0.01'; volSlider.value = trackObj.volume;
+                    volSlider.addEventListener('input', (e) => {
+                        trackObj.volume = parseFloat(e.target.value); updateAudioStates();
+                    });
+                    volGroup.appendChild(volSlider);
+
+                    controlsDiv.append(soloBtn, muteBtn, panGroup, volGroup);
+                    headerDiv.append(nameLabel, controlsDiv);
+                    
+                    const waveWrapper = document.createElement('div');
+                    waveWrapper.className = 'waveform-wrapper track-waveform';
+                    
+                    const trackCanvas = document.createElement('canvas');
+                    trackCanvas.className = 'waveform-canvas';
+                    trackCanvas.width = 1000; trackCanvas.height = 45;
+                    drawWaveform(channelData, trackCanvas, '#3a7ab3');
+                    
+                    const trackProgress = document.createElement('div');
+                    trackProgress.className = 'progress-fill';
+                    trackObj.progressEl = trackProgress;
+
+                    const trackPlayhead = document.createElement('div');
+                    trackPlayhead.className = 'playhead';
+                    trackObj.playheadEl = trackPlayhead;
+
+                    waveWrapper.append(trackCanvas, trackProgress, trackPlayhead);
+                    trackDiv.append(headerDiv, waveWrapper);
+                    trackList.appendChild(trackDiv);
+                });
+                
+                if (masterAudioData) {
+                    drawWaveform(masterAudioData, masterCanvas, '#4CAF50');
+                }
+
+                updateAudioStates();
+
+            } catch (error) {
+                alert("음원을 처리하는 중 오류가 발생했습니다: " + error.message);
+            } finally {
+                loadingOverlay.style.display = 'none';
+            }
+        });
+
+        document.getElementById('playBtn').addEventListener('click', () => {
+            if(audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+            if(tracks.length > 0 && !isPlaying) {
+                const targetTime = parseFloat(seekBar.value);
+                tracks.forEach(t => t.audio.currentTime = targetTime);
+                tracks.forEach(t => t.audio.play());
+                isPlaying = true;
+            }
+        });
+        
+        document.getElementById('pauseBtn').addEventListener('click', () => {
+            tracks.forEach(t => t.audio.pause());
+            isPlaying = false;
+        });
+        
+        document.getElementById('stopBtn').addEventListener('click', () => {
+            tracks.forEach(t => { t.audio.pause(); t.audio.currentTime = 0; });
+            seekBar.value = 0;
+            currentTimeEl.textContent = "00:00";
+            updatePlayheads(0);
+            isPlaying = false;
+        });
+
+        function startSeek() {
+            isDragging = true;
+            wasPlayingBeforeDrag = isPlaying;
+            if (isPlaying) tracks.forEach(t => t.audio.pause());
+        }
+        seekBar.addEventListener('mousedown', startSeek);
+        seekBar.addEventListener('touchstart', startSeek, { passive: true });
+
+        seekBar.addEventListener('input', (e) => {
+            const time = parseFloat(e.target.value);
+            currentTimeEl.textContent = formatTime(time);
+            if (duration > 0) {
+                updatePlayheads((time / duration) * 100);
+            }
+        });
+
+        seekBar.addEventListener('change', (e) => {
+            const time = parseFloat(e.target.value);
+            tracks.forEach(t => t.audio.currentTime = time);
+            if (wasPlayingBeforeDrag) {
+                tracks.forEach(t => t.audio.play());
+                isPlaying = true;
+            }
+            isDragging = false;
+        });
+    </script>
+</body>
+</html>
